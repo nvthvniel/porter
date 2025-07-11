@@ -1,11 +1,18 @@
 # Porter
 
-Automatically detect and add Python dependencies using UV.
+Automatically detect and add Python dependencies to a script using UV.
 
-## Installation
+*Built using Claude Sonnet 4*
+
+## Install
 
 ```bash
-uvx porter
+uv tool install git+https://github.com/nvthvniel/porter.git
+```
+
+## Uninstall
+```bash
+uv tool uninstall porter
 ```
 
 ## Usage
@@ -61,13 +68,3 @@ porter --directory ./project --recursive --max-depth 3 --max-files 100
 # Process only specific files
 porter --directory ./scripts --include "main_*.py" --include "run_*.py"
 ```
-
-
-Porter is a python tool to add depdencies to existing Python scripts using `uv add --script` functionality                                                                         │
-│                                                                                                                                                                                      │
-│   # Tasks                                                                                                                                                                            │
-│   1. Thoroughly understand the current approach detailed in @plan.md and @README.md                                                                                                  │
-│   2. Thoroughly review the existing codebase                                                                                                                                         │
-│   2. Implement a plan for                                                                                                                                                            │
-│                                                                                                                                                                                      │
-│   ULTRATHINK
