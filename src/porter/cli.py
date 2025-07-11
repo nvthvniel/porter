@@ -31,17 +31,49 @@ class ImportVisitor(ast.NodeVisitor):
 
 # Claude: this function extracts third-party dependencies from a Python file
 def extract_dependencies(file_path: Path) -> Set[str]:
+    # Claude: validate file size to prevent processing extremely large files
     try:
-        with open(file_path, "r", encoding="utf-8") as file:
-            content = file.read()
-    except (OSError, UnicodeDecodeError) as e:
+        file_size = file_path.stat().st_size
+        if file_size > 10 * 1024 * 1024:
+            print(f"Error: File {file_path} is too large ({file_size} bytes) - skipping for safety")
+            return set()
+        if file_size == 0:
+            print(f"Warning: File {file_path} is empty - skipping")
+            return set()
+    except (OSError, PermissionError) as e:
+        print(f"Error accessing file {file_path}: {e}")
+        return set()
+
+    # Claude: read file with improved encoding handling
+    try:
+        # Claude: attempt UTF-8 first, then fall back to other encodings
+        encodings_to_try = ["utf-8", "utf-8-sig", "latin-1", "cp1252"]
+        content = None
+        encoding_used = None
+        
+        for encoding in encodings_to_try:
+            try:
+                with open(file_path, "r", encoding=encoding) as file:
+                    content = file.read()
+                    encoding_used = encoding
+                    break
+            except UnicodeDecodeError:
+                continue
+        
+        if content is None:
+            print(f"Error: Could not decode file {file_path} with any supported encoding")
+            return set()
+            
+    except (OSError, PermissionError) as e:
         print(f"Error reading file {file_path}: {e}")
         return set()
 
+    # Claude: validate that the file contains valid Python syntax
     try:
         tree = ast.parse(content)
     except SyntaxError as e:
-        print(f"Syntax error in {file_path}: {e}")
+        print(f"Syntax error in {file_path} (line {e.lineno}): {e.msg}")
+        print(f"This may not be a valid Python file. Please check the file contents.")
         return set()
 
     visitor = ImportVisitor()
@@ -175,13 +207,16 @@ def add_dependencies(file_path: Path, dependencies: Set[str], dry_run: bool = Fa
             return True
         else:
             print(f"Error adding dependencies: {result.stderr}")
+            print("Suggestion: Check if the dependencies exist or if there are network issues")
             return False
 
     except subprocess.TimeoutExpired:
-        print("Timeout while adding dependencies")
+        print("Timeout while adding dependencies (exceeded 2 minutes)")
+        print("Suggestion: Check network connectivity or try with fewer dependencies")
         return False
     except Exception as e:
         print(f"Unexpected error: {e}")
+        print("Suggestion: Please check the file permissions and UV installation")
         return False
 
 
@@ -204,7 +239,7 @@ def validate_directory_path(directory_path: Path) -> bool:
 def find_python_files(directory: Path, recursive: bool = False, max_depth: Optional[int] = None, 
                      include_patterns: Optional[List[str]] = None, 
                      exclude_patterns: Optional[List[str]] = None, 
-                     max_files: Optional[int] = None) -> Generator[Path, None, None]:
+                     max_files: Optional[int] = None, verbose: bool = False) -> Generator[Path, None, None]:
     include_patterns = include_patterns or ["*.py"]
     exclude_patterns = exclude_patterns or []
     
@@ -218,9 +253,25 @@ def find_python_files(directory: Path, recursive: bool = False, max_depth: Optio
             if fnmatch.fnmatch(filename, pattern):
                 return False
         
-        # Claude: check include patterns
+        # Claude: explicit Python file extension validation for security
+        if not filename.lower().endswith('.py'):
+            return False
+        
+        # Claude: validate file size to prevent processing extremely large files
+        try:
+            file_size = file_path.stat().st_size
+            # Claude: skip files larger than 10MB to prevent resource exhaustion
+            if file_size > 10 * 1024 * 1024:
+                if verbose:
+                    print(f"Warning: Skipping {file_path} - file too large ({file_size} bytes)")
+                return False
+        except (OSError, PermissionError):
+            # Claude: skip files we can't access
+            return False
+        
+        # Claude: check include patterns (case-insensitive for .py files)
         for pattern in include_patterns:
-            if fnmatch.fnmatch(filename, pattern):
+            if fnmatch.fnmatch(filename.lower(), pattern.lower()):
                 return True
         
         return False
@@ -315,11 +366,12 @@ def process_directory(directory: Path, recursive: bool = False, max_depth: Optio
     
     # Claude: find Python files using generator for memory efficiency
     python_files = list(find_python_files(directory, recursive, max_depth, 
-                                         include_patterns, exclude_patterns, max_files))
+                                         include_patterns, exclude_patterns, max_files, verbose))
     
     if not python_files:
         if verbose:
             print("No Python files found matching criteria")
+            print("Suggestion: Check if the directory contains .py files and verify include/exclude patterns")
         return result
     
     if verbose:
@@ -393,10 +445,12 @@ def main():
         file_path = Path(args.file)
         if not file_path.exists():
             print(f"Error: File {file_path} does not exist")
+            print("Suggestion: Check the file path and ensure the file exists")
             return 1
         
         if not file_path.is_file():
             print(f"Error: {file_path} is not a file")
+            print("Suggestion: Ensure the path points to a file, not a directory")
             return 1
         
         if args.verbose:
@@ -414,15 +468,18 @@ def main():
         directory_path = Path(args.directory)
         if not directory_path.exists():
             print(f"Error: Directory {directory_path} does not exist")
+            print("Suggestion: Check the directory path and ensure it exists")
             return 1
         
         if not directory_path.is_dir():
             print(f"Error: {directory_path} is not a directory")
+            print("Suggestion: Ensure the path points to a directory, not a file")
             return 1
         
         # Claude: validate directory path for security
         if not validate_directory_path(directory_path):
             print(f"Error: Cannot access directory {directory_path}")
+            print("Suggestion: Check directory permissions and ensure you have read access")
             return 1
         
         if args.verbose:
