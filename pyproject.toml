@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "porter"
+version = "0.1.0"
+description = "Port existing python scripts to use uv script dependancy management"
+authors = [
+    {name = "nvthvniel", email = "email@nathanielstevens.app"},
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = "GPL-3.0-or-later"
+classifiers = [
+    "Development Status :: 5 - Stable",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.scripts]
+porter = "porter.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/porter"]
+
+[project.urls]
+Homepage = "https://github.com/nvthvniel/porter"
+Issues = "https://github.com/nvthvniel/porter/issues"
