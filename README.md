@@ -1,6 +1,7 @@
 # Porter
 
 Automatically detect and add Python dependencies to a script using UV.
+- https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies
 
 *Built using Claude Sonnet 4*
 
