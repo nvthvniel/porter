@@ -1,1 +1,0 @@
-# Claude: test package initialization

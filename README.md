@@ -1,6 +1,6 @@
 # Porter
 
-Automatically detect and add Python dependencies to a script using UV.
+Automatically detect and add Python dependencies to scripts using UV.
 - https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies
 
 <br>
@@ -20,54 +20,45 @@ uv tool uninstall porter
 
 ## Usage
 
-### Process Single File
+Porter processes one or more Python files and automatically adds their dependencies using UV's script dependency management.
+
+### Basic Usage
 
 ```bash
-porter --file script.py
-```
+# Single file
+porter script.py
 
-### Process Directory
+# Multiple files
+porter test_1.py test_2.py module.py
 
-```bash
-# Process all Python files in directory (non-recursive)
-porter --directory /path/to/project
-
-# Process directory recursively
-porter --directory /path/to/project --recursive
-
-# Process with filtering and limits
-porter --directory /path/to/project --recursive --exclude "test_*.py" --max-files 50
+# With options
+porter --verbose --dry-run test_1.py test_2.py
 ```
 
 ## Options
 
-### Target Selection (Required)
-- `--file FILE`: Process single Python file
-- `--directory DIRECTORY`: Process directory of Python files
-
-### Directory Processing
-- `--recursive`: Process directories recursively (only with --directory)
-- `--max-depth N`: Maximum recursion depth (only with --directory and --recursive)
-- `--max-files N`: Maximum number of files to process (safety limit)
-- `--include PATTERN`: Include files matching pattern (can be used multiple times)
-- `--exclude PATTERN`: Exclude files matching pattern (can be used multiple times)
-
-### General Options
 - `--dry-run`: Show what would be done without making changes
-- `--verbose`: Enable verbose output
+- `--verbose`: Enable verbose output with progress tracking
+- `--no-banner`: Don't show banner on startup
 
 ## Examples
 
 ```bash
 # Process single file
-porter --file script.py --dry-run --verbose
+porter script.py
 
-# Process directory with exclusions
-porter --directory ./src --exclude "test_*.py" --exclude "*_test.py" --verbose
+# Process multiple files with verbose output
+porter --verbose src/main.py src/utils.py tests/test_main.py
 
-# Process directory recursively with depth limit
-porter --directory ./project --recursive --max-depth 3 --max-files 100
+# Dry run to see what dependencies would be added
+porter --dry-run --verbose *.py
 
-# Process only specific files
-porter --directory ./scripts --include "main_*.py" --include "run_*.py"
+# Real-world example
+porter --verbose myproject/*.py
 ```
+
+## Exit Codes
+
+- `0`: All files processed successfully
+- `1`: Some files processed successfully, some failed
+- `2`: All files failed or no valid files provided

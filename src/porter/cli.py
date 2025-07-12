@@ -13,36 +13,46 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Claude: this class extracts imports from Python AST
 class ImportVisitor(ast.NodeVisitor):
-    def __init__(self):
+    def __init__(self, file_path: Path):
         self.imports = set()
+        self.local_imports = set()
+        self.file_path = file_path
 
     def visit_Import(self, node):
         for alias in node.names:
             # Claude: extract base package name from dotted imports
             package_name = alias.name.split(".")[0]
-            self.imports.add(package_name)
+            # Claude: check if this is a local import
+            if detect_local_import(package_name, self.file_path):
+                self.local_imports.add(package_name)
+            else:
+                self.imports.add(package_name)
 
     def visit_ImportFrom(self, node):
         if node.module:
             # Claude: extract base package name from 'from package import' statements
-         package_name = node.module.split(".")[0]
-        self.imports.add(package_name)
+            package_name = node.module.split(".")[0]
+            # Claude: check if this is a local import
+            if detect_local_import(node.module, self.file_path):
+                self.local_imports.add(node.module)
+            else:
+                self.imports.add(package_name)
 
 
 # Claude: this function extracts third-party dependencies from a Python file
-def extract_dependencies(file_path: Path) -> Set[str]:
+def extract_dependencies(file_path: Path) -> tuple[Set[str], Set[str]]:
     # Claude: validate file size to prevent processing extremely large files
     try:
         file_size = file_path.stat().st_size
         if file_size > 10 * 1024 * 1024:
             print(f"Error: File {file_path} is too large ({file_size} bytes) - skipping for safety")
-            return set()
+            return set(), set()
         if file_size == 0:
             print(f"Warning: File {file_path} is empty - skipping")
-            return set()
+            return set(), set()
     except (OSError, PermissionError) as e:
         print(f"Error accessing file {file_path}: {e}")
-        return set()
+        return set(), set()
 
     # Claude: read file with improved encoding handling
     try:
@@ -62,11 +72,11 @@ def extract_dependencies(file_path: Path) -> Set[str]:
         
         if content is None:
             print(f"Error: Could not decode file {file_path} with any supported encoding")
-            return set()
+            return set(), set()
             
     except (OSError, PermissionError) as e:
         print(f"Error reading file {file_path}: {e}")
-        return set()
+        return set(), set()
 
     # Claude: validate that the file contains valid Python syntax
     try:
@@ -74,16 +84,16 @@ def extract_dependencies(file_path: Path) -> Set[str]:
     except SyntaxError as e:
         print(f"Syntax error in {file_path} (line {e.lineno}): {e.msg}")
         print(f"This may not be a valid Python file. Please check the file contents.")
-        return set()
+        return set(), set()
 
-    visitor = ImportVisitor()
+    visitor = ImportVisitor(file_path)
     visitor.visit(tree)
 
     # Claude: filter out standard library modules
     stdlib_modules = get_stdlib_modules()
     third_party_deps = visitor.imports - stdlib_modules
 
-    return third_party_deps
+    return third_party_deps, visitor.local_imports
 
 
 # Claude: this function gets the standard library module names
@@ -117,6 +127,84 @@ def get_stdlib_modules() -> Set[str]:
             "pyclbr", "py_compile", "compileall", "dis", "pickletools", "distutils",
             "venv", "zipapp", "faulthandler", "tracemalloc", "warnings", "contextlib"
         }
+
+
+# Claude: this function detects if an import is a local file or package
+def detect_local_import(import_name: str, file_path: Path) -> bool:
+    # Claude: handle relative imports (starting with dots)
+    if import_name.startswith("."):
+        return True
+    
+    # Claude: get the directory containing the current file
+    file_dir = file_path.parent
+    
+    # Claude: resolve the file directory to prevent path traversal
+    try:
+        resolved_file_dir = file_dir.resolve()
+    except (OSError, RuntimeError):
+        return False
+    
+    # Claude: split import name for handling dotted imports
+    import_parts = import_name.split(".")
+    base_import = import_parts[0]
+    
+    # Claude: check for same directory .py file
+    potential_py_file = resolved_file_dir / f"{base_import}.py"
+    if potential_py_file.exists() and potential_py_file.is_file():
+        # Claude: validate file is within expected boundaries
+        try:
+            resolved_potential = potential_py_file.resolve()
+            if str(resolved_potential).startswith(str(resolved_file_dir)):
+                return True
+        except (OSError, RuntimeError):
+            pass
+    
+    # Claude: check for package directory with __init__.py
+    potential_package_dir = resolved_file_dir / base_import
+    if potential_package_dir.exists() and potential_package_dir.is_dir():
+        init_file = potential_package_dir / "__init__.py"
+        if init_file.exists() and init_file.is_file():
+            # Claude: validate package is within expected boundaries
+            try:
+                resolved_package = potential_package_dir.resolve()
+                if str(resolved_package).startswith(str(resolved_file_dir)):
+                    return True
+            except (OSError, RuntimeError):
+                pass
+    
+    # Claude: check for subdirectory imports (e.g., utils.helper)
+    if len(import_parts) > 1:
+        # Claude: construct potential subdirectory path
+        subdir_path = resolved_file_dir
+        for part in import_parts[:-1]:
+            subdir_path = subdir_path / part
+        
+        # Claude: check for .py file in subdirectory
+        potential_subdir_file = subdir_path / f"{import_parts[-1]}.py"
+        if potential_subdir_file.exists() and potential_subdir_file.is_file():
+            try:
+                resolved_subdir = potential_subdir_file.resolve()
+                if str(resolved_subdir).startswith(str(resolved_file_dir)):
+                    return True
+            except (OSError, RuntimeError):
+                pass
+    
+    return False
+
+
+# Claude: this function displays the porter ASCII art banner
+def display_banner():
+    banner = """
+██████╗  ██████╗ ██████╗ ████████╗███████╗██████╗ 
+██╔══██╗██╔═══██╗██╔══██╗╚══██╔══╝██╔════╝██╔══██╗
+██████╔╝██║   ██║██████╔╝   ██║   █████╗  ██████╔╝
+██╔═══╝ ██║   ██║██╔══██╗   ██║   ██╔══╝  ██╔══██╗
+██║     ╚██████╔╝██║  ██║   ██║   ███████╗██║  ██║
+╚═╝      ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
+"""
+    print(banner)
+    print("└─ Automatically detect and add Python dependencies to a script using UV")
+    print("└─ GitHub: https://github.com/nvthvniel/porter")
 
 
 # Claude: this function validates UV installation
@@ -199,7 +287,6 @@ def add_dependencies(file_path: Path, dependencies: Set[str], dry_run: bool = Fa
 
         if result.returncode == 0:
             if verbose:
-                print("\n[+] Successfully added dependencies")
 
                 for dep in sorted(new_deps):
                     print(f" | {dep}")
@@ -220,81 +307,8 @@ def add_dependencies(file_path: Path, dependencies: Set[str], dry_run: bool = Fa
         return False
 
 
-# Claude: this function validates directory paths to prevent path traversal attacks
-def validate_directory_path(directory_path: Path) -> bool:
-    try:
-        # Claude: resolve the path to prevent path traversal
-        resolved_path = directory_path.resolve()
-        # Claude: ensure the resolved path is a directory
-        if not resolved_path.is_dir():
-            return False
-        # Claude: check if the path is accessible
-        list(resolved_path.iterdir())
-        return True
-    except (OSError, PermissionError):
-        return False
 
 
-# Claude: this function finds Python files in a directory
-def find_python_files(directory: Path, recursive: bool = False, max_depth: Optional[int] = None, 
-                     include_patterns: Optional[List[str]] = None, 
-                     exclude_patterns: Optional[List[str]] = None, 
-                     max_files: Optional[int] = None, verbose: bool = False) -> Generator[Path, None, None]:
-    include_patterns = include_patterns or ["*.py"]
-    exclude_patterns = exclude_patterns or []
-    
-    file_count = 0
-    
-    def should_include_file(file_path: Path) -> bool:
-        filename = file_path.name
-        
-        # Claude: check exclude patterns first
-        for pattern in exclude_patterns:
-            if fnmatch.fnmatch(filename, pattern):
-                return False
-        
-        # Claude: explicit Python file extension validation for security
-        if not filename.lower().endswith('.py'):
-            return False
-        
-        # Claude: validate file size to prevent processing extremely large files
-        try:
-            file_size = file_path.stat().st_size
-            # Claude: skip files larger than 10MB to prevent resource exhaustion
-            if file_size > 10 * 1024 * 1024:
-                if verbose:
-                    print(f"Warning: Skipping {file_path} - file too large ({file_size} bytes)")
-                return False
-        except (OSError, PermissionError):
-            # Claude: skip files we can't access
-            return False
-        
-        # Claude: check include patterns (case-insensitive for .py files)
-        for pattern in include_patterns:
-            if fnmatch.fnmatch(filename.lower(), pattern.lower()):
-                return True
-        
-        return False
-    
-    def walk_directory(current_dir: Path, current_depth: int = 0):
-        nonlocal file_count
-        
-        try:
-            for item in current_dir.iterdir():
-                if max_files and file_count >= max_files:
-                    return
-                    
-                if item.is_file() and should_include_file(item):
-                    yield item
-                    file_count += 1
-                elif item.is_dir() and recursive:
-                    if max_depth is None or current_depth < max_depth:
-                        yield from walk_directory(item, current_depth + 1)
-        except PermissionError:
-            # Claude: skip directories we can't access
-            pass
-    
-    yield from walk_directory(directory)
 
 
 # Claude: this class tracks processing results and errors
@@ -306,9 +320,10 @@ class ProcessingResult:
         self.total_dependencies = 0
         self.file_results: Dict[str, Dict] = {}
         self.errors: List[str] = []
+        self.local_import_warnings: Dict[str, Set[str]] = {}
         self.start_time = time.time()
     
-    def add_file_result(self, file_path: Path, dependencies: Set[str], success: bool, error: Optional[str] = None):
+    def add_file_result(self, file_path: Path, dependencies: Set[str], success: bool, local_imports: Set[str] = set(), error: Optional[str] = None):
         self.processed_files += 1
         if success:
             self.successful_files += 1
@@ -317,6 +332,10 @@ class ProcessingResult:
             self.failed_files += 1
             if error:
                 self.errors.append(f"{file_path}: {error}")
+        
+        # Claude: store local imports if any detected
+        if local_imports:
+            self.local_import_warnings[str(file_path)] = local_imports
         
         self.file_results[str(file_path)] = {
             "dependencies": dependencies,
@@ -340,99 +359,120 @@ class ProcessingResult:
                 summary += f" | {error}\n"
         
         return summary
+    
+    def print_local_import_warnings(self):
+        # Claude: display local import warnings in grouped format after processing
+        if self.local_import_warnings:
+            print(f"\n[-] Warning: Local imports detected, these will not be included. Consider using uv projects")
+            for file_path, local_imports in self.local_import_warnings.items():
+                for local_import in sorted(local_imports):
+                    print(f" | {file_path}/{local_import}")
 
 
 # Claude: this function processes a single file and returns results
-def process_single_file(file_path: Path, dry_run: bool = False, verbose: bool = False) -> tuple[Set[str], bool, Optional[str]]:
+def process_single_file(file_path: Path, dry_run: bool = False, verbose: bool = False) -> tuple[Set[str], Set[str], bool, Optional[str]]:
     try:
-        # Claude: extract dependencies
-        dependencies = extract_dependencies(file_path)
+        # Claude: extract dependencies and local imports
+        external_dependencies, local_imports = extract_dependencies(file_path)
         
-        # Claude: add dependencies
-        success = add_dependencies(file_path, dependencies, dry_run, verbose)
+        # Claude: add only external dependencies
+        success = add_dependencies(file_path, external_dependencies, dry_run, verbose)
         
-        return dependencies, success, None
+        return external_dependencies, local_imports, success, None
     except Exception as e:
-        return set(), False, str(e)
+        return set(), set(), False, str(e)
 
 
-# Claude: this function processes multiple files in a directory
-def process_directory(directory: Path, recursive: bool = False, max_depth: Optional[int] = None,
-                     include_patterns: Optional[List[str]] = None, 
-                     exclude_patterns: Optional[List[str]] = None,
-                     max_files: Optional[int] = None,
-                     dry_run: bool = False, verbose: bool = False) -> ProcessingResult:
+# Claude: this function validates and processes multiple files
+def validate_file_list(file_paths: List[str], verbose: bool = False) -> List[Path]:
+    validated_files = []
+    seen_paths = set()
+    
+    for file_str in file_paths:
+        file_path = Path(file_str)
+        
+        # Claude: resolve path to handle relative paths and detect duplicates
+        try:
+            resolved_path = file_path.resolve()
+        except (OSError, RuntimeError) as e:
+            print(f"Error: Cannot resolve path {file_path}: {e}")
+            continue
+        
+        # Claude: check for duplicates
+        if str(resolved_path) in seen_paths:
+            if verbose:
+                print(f"Warning: Duplicate file path ignored: {file_path}")
+            continue
+        seen_paths.add(str(resolved_path))
+        
+        # Claude: validate file exists
+        if not resolved_path.exists():
+            print(f"Error: File does not exist: {file_path}")
+            continue
+        
+        # Claude: validate it's a file
+        if not resolved_path.is_file():
+            print(f"Error: Path is not a file: {file_path}")
+            continue
+        
+        # Claude: validate Python file extension for security
+        if not resolved_path.name.lower().endswith(".py"):
+            print(f"Error: File is not a Python file: {file_path}")
+            continue
+        
+        validated_files.append(resolved_path)
+    
+    return validated_files
+
+
+# Claude: this function processes multiple files with progress tracking
+def process_multiple_files(file_paths: List[str], dry_run: bool = False, verbose: bool = False) -> ProcessingResult:
     result = ProcessingResult()
     
-    # Claude: find Python files using generator for memory efficiency
-    python_files = list(find_python_files(directory, recursive, max_depth, 
-                                         include_patterns, exclude_patterns, max_files, verbose))
+    # Claude: validate all files upfront
+    valid_files = validate_file_list(file_paths, verbose)
     
-    if not python_files:
+    if not valid_files:
         if verbose:
-            print("No Python files found matching criteria")
-            print("Suggestion: Check if the directory contains .py files and verify include/exclude patterns")
+            print("No valid Python files to process")
         return result
     
     if verbose:
-        print(f"\n[+] Found {len(python_files)} Python files to process")
+        print(f"\n[+] Processing {len(valid_files)} Python files")
     
-    # Claude: process files with progress tracking
-    for i, file_path in enumerate(python_files, 1):
+    # Claude: process files sequentially with progress tracking
+    for i, file_path in enumerate(valid_files, 1):
         if verbose:
-            print(f"\n[{i}/{len(python_files)}] Processing: {file_path}")
+            print(f"\n[+] {i}/{len(valid_files)}: {file_path}")
         
-        dependencies, success, error = process_single_file(file_path, dry_run, verbose)
-        result.add_file_result(file_path, dependencies, success, error)
+        dependencies, local_imports, success, error = process_single_file(file_path, dry_run, verbose)
+        result.add_file_result(file_path, dependencies, success, local_imports, error)
+        
+        # Claude: provide immediate feedback for failures
+        if not success and error:
+            print(f"Error processing {file_path}: {error}")
+    
+    # Claude: display all local import warnings after processing
+    result.print_local_import_warnings()
     
     return result
+
+
 
 
 # Claude: this is the main function that orchestrates the dependency detection and addition
 def main():
     parser = argparse.ArgumentParser(description="Automatically detect and add Python dependencies using UV")
     
-    # Claude: create mutually exclusive group for file vs directory
-    target_group = parser.add_mutually_exclusive_group(required=True)
-    target_group.add_argument("--file", type=str, help="Python file to analyze")
-    target_group.add_argument("--directory", type=str, help="Directory to analyze")
+    # Claude: positional arguments for multiple files
+    parser.add_argument("files", nargs="+", metavar="FILE", help="Python files to analyze")
     
-    # Claude: directory-specific options
-    parser.add_argument("--recursive", action="store_true", help="Process directories recursively (only with --directory)")
-    parser.add_argument("--max-depth", type=int, help="Maximum recursion depth (only with --directory and --recursive)")
-    parser.add_argument("--max-files", type=int, help="Maximum number of files to process (safety limit)")
-    parser.add_argument("--include", action="append", help="Include files matching pattern (can be used multiple times)")
-    parser.add_argument("--exclude", action="append", help="Exclude files matching pattern (can be used multiple times)")
-    
-    # Claude: existing options
+    # Claude: options
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done without making changes")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("--no-banner", action="store_true", help="Disable ASCII art banner display")
 
     args = parser.parse_args()
-    
-    # Claude: validate argument combinations
-    if args.recursive and not args.directory:
-        print("Error: --recursive can only be used with --directory")
-        return 1
-    
-    if args.max_depth and not (args.directory and args.recursive):
-        print("Error: --max-depth can only be used with --directory and --recursive")
-        return 1
-    
-    # Claude: validate directory-specific options are not used with --file
-    if args.file:
-        directory_specific_options = []
-        if args.include:
-            directory_specific_options.append("--include")
-        if args.exclude:
-            directory_specific_options.append("--exclude")
-        if args.max_files:
-            directory_specific_options.append("--max-files")
-        
-        if directory_specific_options:
-            options_str = ", ".join(directory_specific_options)
-            print(f"Error: {options_str} can only be used with --directory")
-            return 1
     
     # Claude: validate UV installation
     if not validate_uv_installation():
@@ -440,78 +480,26 @@ def main():
         print("Please install UV: https://docs.astral.sh/uv/getting-started/installation/")
         return 1
     
-    # Claude: process single file
-    if args.file:
-        file_path = Path(args.file)
-        if not file_path.exists():
-            print(f"Error: File {file_path} does not exist")
-            print("Suggestion: Check the file path and ensure the file exists")
-            return 1
-        
-        if not file_path.is_file():
-            print(f"Error: {file_path} is not a file")
-            print("Suggestion: Ensure the path points to a file, not a directory")
-            return 1
-        
-        if args.verbose:
-            print(f"\n[+] Analyzing file: {file_path}")
-        
-        dependencies, success, error = process_single_file(file_path, args.dry_run, args.verbose)
-        
-        if error:
-            print(f"Error processing file: {error}")
-        
-        return 0 if success else 1
+    # Claude: display banner after UV validation but before file processing
+    if not args.no_banner:
+        display_banner()
     
-    # Claude: process directory
-    elif args.directory:
-        directory_path = Path(args.directory)
-        if not directory_path.exists():
-            print(f"Error: Directory {directory_path} does not exist")
-            print("Suggestion: Check the directory path and ensure it exists")
-            return 1
-        
-        if not directory_path.is_dir():
-            print(f"Error: {directory_path} is not a directory")
-            print("Suggestion: Ensure the path points to a directory, not a file")
-            return 1
-        
-        # Claude: validate directory path for security
-        if not validate_directory_path(directory_path):
-            print(f"Error: Cannot access directory {directory_path}")
-            print("Suggestion: Check directory permissions and ensure you have read access")
-            return 1
-        
-        if args.verbose:
-            print(f"\n[+] Processing directory: {directory_path}")
-            if args.recursive:
-                print(f" | Recursive: Yes")
-                if args.max_depth:
-                    print(f" | Max depth: {args.max_depth}")
-            if args.max_files:
-                print(f" | Max files: {args.max_files}")
-            if args.include:
-                print(f" | Include patterns: {args.include}")
-            if args.exclude:
-                print(f" | Exclude patterns: {args.exclude}")
-        
-        result = process_directory(
-            directory_path, 
-            args.recursive, 
-            args.max_depth,
-            args.include, 
-            args.exclude,
-            args.max_files,
-            args.dry_run, 
-            args.verbose
-        )
-        
-        if args.verbose:
-            print(result.get_summary())
-        
-        return 0 if result.failed_files == 0 else 1
+    # Claude: process multiple files
+    result = process_multiple_files(args.files, args.dry_run, args.verbose)
     
-    return 1
+    # Claude: display summary if verbose or if there were any issues
+    if args.verbose or result.failed_files > 0:
+        print(result.get_summary())
+    
+    # Claude: intelligent exit codes - 0 for all success, 1 for some failures, 2 for all failures
+    if result.processed_files == 0:
+        return 2  # Claude: no valid files processed
+    elif result.failed_files == 0:
+        return 0  # Claude: all files processed successfully
+    elif result.successful_files == 0:
+        return 2  # Claude: all files failed
+    else:
+        return 1  # Claude: mixed results
 
 
 if __name__ == "__main__":
